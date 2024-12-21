@@ -118,7 +118,7 @@ void AJet::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 		Input->BindAction(IA_throttle, ETriggerEvent::Triggered, this, &AJet::throttleControl);
 		Input->BindAction(IA_rudders, ETriggerEvent::Triggered, this, &AJet::ruddersControl);
 		Input->BindAction(IA_landingGear, ETriggerEvent::Triggered, this, &AJet::landingGearControl);
-		Input->BindAction(IA_landingGear, ETriggerEvent::Triggered, this, &AJet::landingGearControl);
+		//Input->BindAction(IA_landingGear, ETriggerEvent::Triggered, this, &AJet::landingGearControl);
 	}
 }
 
@@ -128,23 +128,44 @@ void AJet::stickControl(const FInputActionInstance& Instance) {
 	FVector2D AxisValue = Instance.GetValue().Get<FVector2D>(); //Controler input from a stick. Gets an x and y value to represent pitch and roll
 
 	UE_LOG(LogTemp, Warning, TEXT("Rotation is: %f,%f"), AxisValue.X, AxisValue.Y); // TODO: Create a widget to display this instead. TODO. Why is x y and y x?
+	float interpSpeed = 3;
+	float waitTime = 3; //don't need
+	float Delt = UGameplayStatics::GetWorldDeltaSeconds(this);
 
-	//lerp(starting movement, speed, ending value?)
-	float lerpout = lerp(AxisValue.X, 1, pitch);
-	printf("Lerp  = %f", lerpout);
-	FRotator newRot = FRotator(ROTSPEED * pitch, 0.0f, ROTSPEED * AxisValue.Y);
+	printf("%f", Delt);
+	UE_LOG(LogTemp, Warning, TEXT("Delta Time: %f"), Delt);
 
-	AddActorLocalRotation(newRot);
+	//if (AxisValue.X == 0){
+		//AxisValue.X == -1;
+	//}
+
+	// src: https://stackoverflow.com/questions/798046/digit-limitation-from-decimal-point-in-c
+	// Converts rawinput 1 to 0 axis into a proper 1 to -1 axis. rounds to 10ths place as a virtual deadzone
+	// TODO: Convert to a function. Apply to any and all stick inputs
+	//double scale = 10.0;
+	//AxisValue.X = trunc(2 * (AxisValue.X - 0.5) * scale) / scale;
+	//AxisValue.Y = trunc(2 * (AxisValue.Y - 0.5) * scale) / scale;
+
+	UE_LOG(LogTemp, Warning, TEXT("New Rotation is: %f,%f"), AxisValue.X, AxisValue.Y); // TODO: Create a widget to display this instead. TODO. Why is x y and y x?
+
+
+	FRotator CurrentRotation = GetActorRotation();
+	FRotator NewInputRotation = FRotator(ROTSPEED * AxisValue.X, 0.0f, ROTSPEED * AxisValue.Y);
+	AddActorLocalRotation(NewInputRotation);
 }
 
 void AJet::throttleControl(const FInputActionInstance& Instance) {
 	FVector2D AxisValue = Instance.GetValue().Get<FVector2D>(); //A-10C jets are dual-engine. X=left engine, Y=Right engine
 	UE_LOG(LogTemp, Warning, TEXT("Throttle left engine: %f\n Throttle right engine: %f"), AxisValue.X, AxisValue.Y);
 
+	double scale = 10.0;
+	AxisValue.X = trunc(2 * (AxisValue.X - 0.5) * scale) / scale;
+	AxisValue.Y = trunc(2 * (AxisValue.Y - 0.5) * scale) / scale;
+
 	moveSpeed = (AxisValue.X * 1000 + AxisValue.Y * 1000);
 
 	//Allows use of dual engine setup to turn jet on Yaw axis
-	float rotationSpeed = (AxisValue.Y - AxisValue.X); //Y rotation is negative so we want to go negative if X is bigger
+	float rotationSpeed = ((AxisValue.Y - AxisValue.X)/5); //Y rotation is negative so we want to go negative if X is bigger
 
 	//This will probably be disabled temporarily while I do other stuff later. Remember to uncomment it when working on the real thing to make sure dead zones are set and good
 	FRotator newRot = FRotator(0.0f, ROTSPEED * rotationSpeed, 0.0f); //TODO: Call ruddersControl and pass float value in instead. RuddersControl takes a different value type. Make a new function that they BOTH call that takes a float made from the new type
@@ -161,13 +182,14 @@ void AJet::ruddersControl(const FInputActionInstance& Instance) {
 void AJet::landingGearControl(const FInputActionInstance& Instance) {
 	float FloatValue = Instance.GetValue().Get<float>();
 	UE_LOG(LogTemp, Warning, TEXT("Gear is: %f"), FloatValue);
-
-	if (FloatValue == 1 and wheel_FR->GetRelativeLocation.Z) {
-		wheel_FR->SetRelativeLocation(FVector(25, 15, 0.f));
-	}
-	else {
-		wheel_FR->SetRelativeLocation(FVector(25, 15, -50));
-	}
+	//Timeout zone. Something here causes crashes and I don't want to spend time on it rn
+	// Also note that I got rid of one of the calls to landing gear. Why were there 2???
+	//if (FloatValue == 1 and wheel_FR->GetRelativeLocation.Z) {
+		//wheel_FR->SetRelativeLocation(FVector(25, 15, 0.f));
+	//}
+	//else {
+		//wheel_FR->SetRelativeLocation(FVector(25, 15, -50));
+	//}
 }
 
 //TODO: Add button for landing gear
