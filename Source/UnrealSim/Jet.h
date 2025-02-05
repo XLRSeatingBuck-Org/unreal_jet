@@ -7,6 +7,7 @@
 #include "InputActionValue.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "Components/PrimitiveComponent.h" // get angular and linear damping
 #include "Jet.generated.h"
 
 
@@ -24,7 +25,7 @@ protected:
 	virtual void BeginPlay() override;
 
 	//Mesh components
-	UPROPERTY(VisibleAnywhere, Category = "Mesh Components")
+	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Mesh Components")
 	UStaticMeshComponent* body;
 	UPROPERTY(VisibleAnywhere, Category = "Mesh Components")
 	UStaticMeshComponent* Robot;
@@ -47,9 +48,13 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "EnhancedInput")
 	class UInputAction* IA_throttle;
 	UPROPERTY(EditAnywhere, Category = "EnhancedInput")
-	class UInputAction* IA_rudders;
+	class UInputAction* IA_rudder;
 	UPROPERTY(EditAnywhere, Category = "EnhancedInput")
 	class UInputAction* IA_landingGear;
+	UPROPERTY(EditAnywhere, Category = "EnhancedInput")
+	class UInputAction* IA_toeBrake;
+	UPROPERTY(EditAnywhere, Category = "EnhancedInput")
+	class UInputAction* IA_spoiler;
 
 public:	
 	// Called every frame
@@ -60,7 +65,10 @@ public:
 
 private:
 	void stickControl(const FInputActionInstance& Instance);
+	void stickRelease();
 	void throttleControl(const FInputActionInstance& Instance);
-	void ruddersControl(const FInputActionInstance& Instance); //Note this one is plural and the others aren't, future me
+	void rudderControl(const FInputActionInstance& Instance);
 	void landingGearControl(const FInputActionInstance& Instance);
+	void toeBrakeControl(const FInputActionInstance& Instance);
+	void spoilerControl(const FInputActionInstance& Instance);
 };
