@@ -37,7 +37,7 @@ protected:
 	UStaticMeshComponent* wheel_BM;
 
 	//Camera Control Components
-	UPROPERTY(VisibleAnywhere, Category = "Camera Components")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera Components")
 	class UCameraComponent* backCamera;
 
 	//Input components

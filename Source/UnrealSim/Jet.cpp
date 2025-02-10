@@ -4,6 +4,7 @@
 #include "Jet.h"
 #include <cmath> //contains interpolation function
 #include "Components/StaticMeshComponent.h" //Create default subobject
+#include "Components/PrimitiveComponent.h" // for torque
 #include "Camera/CameraComponent.h"
 #include "UObject/ConstructorHelpers.h" //Set up file paths for loading in meshes
 #include "InputMappingContext.h" //Setups for enhanced input
@@ -12,7 +13,7 @@
 
 // TODO: Enable physics in begin play so angular and linear damping work by default
 
-const float ROTSPEED = 10.0f; //blanket rotation speed. Will eventually be decided via joystick input
+const float ROTSPEED = 1.0f; //blanket rotation speed. Will eventually be decided via joystick input
 float LandingGearY = -50.f;
 int moveSpeed = 0; //Movement speed
 //float gravity = -1;
@@ -24,15 +25,19 @@ float pitch = 0; //up and down
 float yaw = 0; //left and right
 float roll = 0; //side to side
 // TODO: Make throttleX and Y 1 vector
-FVector ForwardVector;
+FVector forwardVector;
 
 float ThrottleX;
 float ThrottleY;
 
 float Rudder; // 1 axis [-1,1] so only 1 float needed. Describes yaw ability of jet
 
-int counter = 0; // todo: Counter of what??
 float forwardDampVal = 0;
+
+// TODO: Better name. Make a const
+// I'd like to use this because it's nicer but uneral is doing that thing where it initializes my globals to garbage again. TODO: See why that is
+	// Remember that this also applies to movespeed I think? That could be nice to see too
+float traceLength = 10000000; // length of ray trace telling plane height in tick
 
 // Sets default values
 AJet::AJet()
@@ -88,6 +93,9 @@ void AJet::BeginPlay()
 	//int actorXLoc = GetActorLocation().X;
 	APlayerController* PlayerController = UGameplayStatics::GetPlayerController(this, 0);
 
+	// enable physics by default and set variables to body for phyics modifications
+	body->SetSimulatePhysics(true); // TODO: This is a nice thought but it does NOT work. Maybe try setting these to this instead of body?
+
 	if (PlayerController)
 	{
 		//Possess this actor
@@ -100,50 +108,65 @@ void AJet::BeginPlay()
 // Called every frame
 void AJet::Tick(float DeltaTime)
 {
-
-	//I take throttle values x and y. Add them together
-	// Multiply this new val by 3
-	// apply it to linear and angular damping
-	forwardDampVal = (ThrottleX + ThrottleY) * 3;
-
+	// Damping is set based on movement speed from both engines
+	// a faster plane can catch air and so it's less affected by gravity
+	forwardDampVal = (ThrottleX + ThrottleY) * 5;
 	body->SetLinearDamping(forwardDampVal);
 	body->SetAngularDamping(forwardDampVal);
 
-	if (forwardDampVal < 5){ // If plane isn't going near top speed then we should start tilting downwards
-		// plane body rotates downwards
-		// set rotation relative to forward damp value where 5 requires no rotation and 1 should lerp towards 180
-			// 180/5 is 36
-			// for now I should just get the plane to rotate down to 180 degrees and then add the lerp vals from there
-		
-		//AddActorRotation(180);
+	// Plane's rotation and location are tracked to cast a ray straight downwards
+	FVector currentLocation = GetActorLocation(); // for raycasting
+	FRotator currentRotation = GetActorRotation(); // Raycasting and downwards forces
 
-		// get actor rotation
-			// add value to it until it's 180 facing straight down
+	// Final value is the length of the ray. Needs to be as long as the plane can go high
+	FVector EndLocation = currentLocation - FVector (0, 0, 1000000);
+
+	FCollisionQueryParams CollisionParams;
+	CollisionParams.AddIgnoredActor(this); // Ray cast can't collide with the plane object
+
+	// Cast a ray and return the hit result as a height value
+	FHitResult HitResult;
+	bool bHit = GetWorld()->LineTraceSingleByChannel(
+		HitResult,
+		currentLocation,
+		EndLocation,
+		ECC_Visibility,
+		CollisionParams
+	);
 		
-		FRotator CurrentRotation = GetActorRotation();
-		UE_LOG(LogTemp, Warning, TEXT("---------------------------------------Current Rotation: %f---------------------------"), CurrentRotation.Yaw);
-		// values are p, y, and r. Fully down is y=0. y should be lerpint to 0
-		FRotator NewInputRotation = FRotator(0.f, 0.f, 0.f);
-		//AddActorLocalRotation(NewInputRotation);
-		ThrottleY = FMath::FInterpTo(CurrentRotation.Yaw, 0, GetWorld()->GetDeltaSeconds(), 300.0f);
-		// lerp plane rotation to 0 IFF plane speed is high enough and plane is physically in air
+	float HeightFromGround;
+	if (bHit)
+	{
+		HeightFromGround = currentLocation.Z - HitResult.ImpactPoint.Z;
 	}
-	UE_LOG(LogTemp, Warning, TEXT("damp val speed = %f"), forwardDampVal);
+	//DrawDebugLine(GetWorld(), currentLocation, HitResult.ImpactPoint, FColor::Green, false, -1, 0, 1.0f);
+	//UE_LOG(LogTemp, Warning, TEXT("height from ground: %f"), HeightFromGround);
 
+	// TODO: This system doesn't take into account flying upsaide down (requiring reverse counter-steer) or sideways (requiring rudder counter-steer)
+	//UE_LOG(LogTemp, Warning, TEXT("pitch: %f"), currentRotation.Pitch);
+	if (currentRotation.Pitch > -80 && moveSpeed > 100){ // if the plane isn't facing straight downwards
+		float altitudeFactor = 1.0f - ((HeightFromGround - 80.0f) / 79920.0f); // scale torque power to altitude. Torque will be eliminated at heights of 80k feet
+		// TODO: Torque is re-added at heights above ceiling of airplane
+		float torquePitch = (415.0f - (moveSpeed / 6.0f)) * altitudeFactor; // 415 is tested to require almost perfect yoke resistance on controller. May need adjustment for sim
+		FVector torque = FVector(0.f, torquePitch, 0.f);
+		
+		body->AddTorqueInDegrees(torque, NAME_None, true);
+	}
+
+	/*
+	// TODO: This same code block is functionally also commented out in throttle func because neither worked. Pick an approach and delete the rest
 	if (ThrottleX == 0 && ThrottleY == 0){
-		UE_LOG(LogTemp, Warning, TEXT("speed should be lerping to 0"));
+		//UE_LOG(LogTemp, Warning, TEXT("speed should be lerping to 0"));
     	moveSpeed = FMath::FInterpTo(moveSpeed, 0, DeltaTime, 5.0f);
-	}
+	}*/
 
-	moveScaled = moveSpeed/maxMoveSpeed; // moveScaled is now a float between 0 and 1
-	UE_LOG(LogTemp, Warning, TEXT("scaled: %f moveSPeed = %i max = %f"), moveScaled, moveSpeed, maxMoveSpeed);
+	// scales movement for plane rotation to never surpass max speed
+	moveScaled = moveSpeed/maxMoveSpeed;
 	
-	// Get the forward vector of the actor
-	ForwardVector = GetActorForwardVector();
-
-	// Calculate the new location based on forward movement
-	FVector NewLocation = GetActorLocation() + (ForwardVector * moveSpeed * DeltaTime); // TODO: moveSPeed defaults to 1000 and idk
+	forwardVector = GetActorForwardVector();
+	FVector NewLocation = GetActorLocation() + (forwardVector * moveSpeed * DeltaTime); // TODO: moveSPeed defaults to 1000 and idk
 		
+	UE_LOG(LogTemp, Warning, TEXT("rotspeed: %f"), ROTSPEED);
 	UE_LOG(LogTemp, Warning, TEXT("NLX: %f, NLY: %f MoveSPeed: %i"), NewLocation.X, NewLocation.Y, moveSpeed);
 	// Set the new location
 	SetActorLocation(NewLocation);
@@ -158,9 +181,7 @@ void AJet::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 	//src: https://www.youtube.com/watch?v=O-3PNiTHlE0
 	// Add input mapping context
 	if (APlayerController * PlayerController = Cast<APlayerController>(Controller)) {
-		// Get local player subsystem
 		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PlayerController->GetLocalPlayer())) {
-			// Add input context
 			Subsystem->AddMappingContext(IM_main, 0);
 		}
 	}
@@ -186,31 +207,27 @@ void AJet::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 void AJet::stickControl(const FInputActionInstance& Instance) {
 	FVector2D AxisValue = Instance.GetValue().Get<FVector2D>(); //Controler input from a stick. Gets an x and y value to represent pitch and roll
 
-	// Jets "cut" through the air. Instead of applying rotational forces we should be tilting the plane to match the stick
-		// IE: if the stick is tilted 10 degrees the plane is tilted 10 degrees. WHen you ease off the plane straightens out
-		// if the plane isn't going fast enough and loses altitude you're no longer cutting though the wind and so your plane begins to tilt downwards
+	//UE_LOG(LogTemp, Warning, TEXT("Rotation is: %f,%f"), AxisValue.X, AxisValue.Y); // TODO: Create a widget to display this instead. TODO. Why is x y and y x?
 
-	UE_LOG(LogTemp, Warning, TEXT("Rotation is: %f,%f"), AxisValue.X, AxisValue.Y); // TODO: Create a widget to display this instead. TODO. Why is x y and y x?
-
-	//Fix lerp from lagging when a player rotates their stick aroudn from negative to positive
+	//Fix lerp from lagging when a player rotates their stick around from negative to positive
 	pitch = FMath::Lerp(pitch, AxisValue.X, 0.1);
-	if (AxisValue.X < -0.6 && pitch > 0 || AxisValue.X > 0.6 && pitch < 0){ // Fixes lerp doing extra steering while it goes to appropriate val
+	if (AxisValue.X < -0.6 && pitch > 0 || AxisValue.X > 0.6 && pitch < 0){
 		pitch = 0;
 	}
 	roll = FMath::Lerp(roll, AxisValue.Y, 0.1);
-	if (AxisValue.Y < -0.6 && roll > 0 || AxisValue.Y > 0.6 && roll < 0){ // Fixes lerp doing extra steering while it goes to appropriate val
+	if (AxisValue.Y < -0.6 && roll > 0 || AxisValue.Y > 0.6 && roll < 0){
 		roll = 0;
 	}
-	UE_LOG(LogTemp, Warning, TEXT("pitch(Y): %f, roll(X): %f"), pitch, roll); // Movement is updating correctly??? Something updating the model must br wrong
+	//UE_LOG(LogTemp, Warning, TEXT("pitch(Y): %f, roll(X): %f"), pitch, roll); // Movement is updating correctly??? Something updating the model must br wrong
 
-	FRotator CurrentRotation = GetActorRotation();
+	FRotator currentRotation = GetActorRotation();
 	FRotator NewInputRotation = FRotator(ROTSPEED * pitch * moveScaled, 0.0f, ROTSPEED * roll * moveScaled);
 	AddActorLocalRotation(NewInputRotation);
 }
 
-// Reset stick positions when player releases the stick
+// Reset stick positions when player releases the stick. Fixes lerp lag
 void AJet::stickRelease() { //reset pitch and roll
-	UE_LOG(LogTemp, Warning, TEXT("Sticks Reset"));
+	//UE_LOG(LogTemp, Warning, TEXT("Sticks Reset"));
 	roll = 0;
 	pitch = 0;
 }
@@ -219,17 +236,18 @@ void AJet::throttleControl(const FInputActionInstance& Instance) {
 	FVector2D AxisValue = Instance.GetValue().Get<FVector2D>(); //A-10C jets are dual-engine. X=left engine, Y=Right engine
 	UE_LOG(LogTemp, Warning, TEXT("Throttle left engine: %f\n Throttle right engine: %f"), AxisValue.X, AxisValue.Y);
 	
-	if (AxisValue.X > 0){ // Throttle is moving
-		UE_LOG(LogTemp, Warning, TEXT("axis x greater than 0"));
-		ThrottleX = FMath::FInterpTo(ThrottleX, AxisValue.X, GetWorld()->GetDeltaSeconds(), 3.0f);
-		ThrottleY = FMath::FInterpTo(ThrottleY, AxisValue.Y, GetWorld()->GetDeltaSeconds(), 3.0f);
-	}
-	else{ // Throttle is down. The plane should be decellerating
-		UE_LOG(LogTemp, Warning, TEXT("axis value not greater than 0"));
-    	ThrottleX = FMath::FInterpTo(ThrottleX, AxisValue.X, GetWorld()->GetDeltaSeconds(), 300.0f);
-    	ThrottleY = FMath::FInterpTo(ThrottleY, AxisValue.Y, GetWorld()->GetDeltaSeconds(), 300.0f);
-	}
+	// TODO: This all works but it should (at least the else if) be moved to tick so it runs when the runction doesn't
+	if ((ThrottleX + ThrottleY) >= (AxisValue.X + AxisValue.Y)){ // Throttle is moving
+		UE_LOG(LogTemp, Warning, TEXT("----------------axis x greater than 0. Throttle is lerping upwards"));
+		ThrottleX = FMath::FInterpTo(ThrottleX, AxisValue.X, GetWorld()->GetDeltaSeconds(), 0.5);
+		ThrottleY = FMath::FInterpTo(ThrottleY, AxisValue.Y, GetWorld()->GetDeltaSeconds(), 0.5);
 	
+	}
+	else if ((ThrottleX + ThrottleY) < (AxisValue.X + AxisValue.Y)){
+		UE_LOG(LogTemp, Warning, TEXT("----------------axis x less than 0. Throttle is lerping downwards"));
+		ThrottleX = FMath::FInterpTo(ThrottleX, AxisValue.X, GetWorld()->GetDeltaSeconds(), 0.01);
+		ThrottleY = FMath::FInterpTo(ThrottleY, AxisValue.Y, GetWorld()->GetDeltaSeconds(), 0.01);
+	}
 
 	//UE_LOG(LogTemp, Warning, TEXT("Throttle left engine: %f\n Throttle right engine: %f"), ThrottleX, ThrottleY);
 
@@ -243,7 +261,7 @@ void AJet::throttleControl(const FInputActionInstance& Instance) {
 
 void AJet::rudderControl(const FInputActionInstance& Instance) {
 	float FloatValue = Instance.GetValue().Get<float>(); //Rudders will go between positive and negative to decide rotation so we don't need a vector
-	UE_LOG(LogTemp, Warning, TEXT("Yaw is: %f"), FloatValue);
+	//UE_LOG(LogTemp, Warning, TEXT("Yaw is: %f"), FloatValue);
 
 	if (FloatValue < 0.09 && FloatValue > -0.08){
 		Rudder = 0;
@@ -258,9 +276,11 @@ void AJet::rudderControl(const FInputActionInstance& Instance) {
 
 void AJet::landingGearControl(const FInputActionInstance& Instance) {
 	float FloatValue = Instance.GetValue().Get<float>();
-	UE_LOG(LogTemp, Warning, TEXT("Gear is: %f"), FloatValue);
+	//UE_LOG(LogTemp, Warning, TEXT("Gear is: %f"), FloatValue);
 	//Timeout zone. Something here causes crashes and I don't want to spend time on it rn
 	// Also note that I got rid of one of the calls to landing gear. Why were there 2???
+
+	// TODO: UNreal engine has built in suspension stuff. DO that for your langing gears
 	if (FloatValue == 1 and wheel_FR->GetRelativeLocation().Z) {
 		wheel_FR->SetRelativeLocation(FVector(225, 341, 600.f)); // Temp values until I make the final aircraft with the final positions
 	}
@@ -280,7 +300,7 @@ void AJet::toeBrakeControl(const FInputActionInstance& Instance){
 	UE_LOG(LogTemp, Warning, TEXT("Left Toe brake: %f\n Right toe brake: %f"), AxisValue.X, AxisValue.Y);
 
 	float toeBrakeOut = ((AxisValue.X+1) + (AxisValue.Y+1));
-	UE_LOG(LogTemp, Warning, TEXT("ToeBrakeOut: %f"), toeBrakeOut);
+	//UE_LOG(LogTemp, Warning, TEXT("ToeBrakeOut: %f"), toeBrakeOut);
 	// TODO: Make a conditional that the plane's touching the ground and the landing gear is out for this to apply
 	moveSpeed = FMath::Lerp(moveSpeed, moveSpeed * toeBrakeOut, 0.001); // When both toebrakes are applied this will lerp towards 0
 
@@ -290,7 +310,7 @@ void AJet::toeBrakeControl(const FInputActionInstance& Instance){
 // brake the plane from the wings. Good for landing plane. Increases effectiveness of toe brakes
 void AJet::spoilerControl(const FInputActionInstance& Instance) {
 	float FloatValue = Instance.GetValue().Get<float>();
-	UE_LOG(LogTemp, Warning, TEXT("Spoiler is: %f"), FloatValue);
+	//UE_LOG(LogTemp, Warning, TEXT("Spoiler is: %f"), FloatValue);
 	if (FloatValue == 1){
 		moveSpeed = FMath::Lerp(moveSpeed, 0, 0.001); // According to my timer this almost halves the time it takes for braking (~47 to ~23)
 		// TODO: Once I've implemented the downwards force, apply that here too and increase brake control power
