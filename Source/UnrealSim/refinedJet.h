@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/Pawn.h"
 #include "InputActionValue.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
@@ -12,21 +13,16 @@
 #include "Components/SceneCaptureComponent2D.h"
 #include "Components/StaticMeshComponent.h" // For UStaticMeshComponent
 #include "GameFramework/PlayerController.h" // For accessing player controller
-#include "Jet.generated.h"
-
+#include "refinedJet.generated.h"
 
 UCLASS()
-class UNREALSIM_API AJet : public APawn
+class UNREALSIM_API ArefinedJet : public APawn
 {
 	GENERATED_BODY()
 
 public:
 	// Sets default values for this pawn's properties
-	AJet();
-
-protected:
-	// Called when the game starts or when spawned
-	virtual void BeginPlay() override;
+	ArefinedJet();
 
 	//Mesh components
 	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Mesh Components")
@@ -60,6 +56,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "EnhancedInput")
 	class UInputAction* IA_spoiler;
 
+protected:
+	// Called when the game starts or when spawned
+	virtual void BeginPlay() override;
+
 public:	
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
@@ -67,12 +67,8 @@ public:
 	// Called to bind functionality to input
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="cppVars")
-	int moveSpeed = 0;
-
 private:
 	void stickControl(const FInputActionInstance& Instance);
-	void stickRelease();
 	void throttleControl(const FInputActionInstance& Instance);
 	void rudderControl(const FInputActionInstance& Instance);
 	void landingGearControl(const FInputActionInstance& Instance);

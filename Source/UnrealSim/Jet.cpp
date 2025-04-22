@@ -10,13 +10,14 @@
 #include "InputMappingContext.h" //Setups for enhanced input
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/PlayerController.h" //Posession for player
+#include "Components/SceneCaptureComponent2D.h"
+#include "Engine/TextureRenderTarget2D.h"
 
 // TODO: Enable physics in begin play so angular and linear damping work by default
 
 const float ROTSPEED = 1.0f; //blanket rotation speed. Will eventually be decided via joystick input
 float LandingGearY = -50.f;
 int moveSpeed = 0; //Movement speed
-//float gravity = -1;
 float moveScaled = 0; // used to scale values that need to be stronger or weaker when flying/bussing
 float maxMoveSpeed = 2000.f; // float so that when it's divided by moveSpeed I get a float output for moveScaled
 
@@ -24,7 +25,6 @@ float maxMoveSpeed = 2000.f; // float so that when it's divided by moveSpeed I g
 float pitch = 0; //up and down
 float yaw = 0; //left and right
 float roll = 0; //side to side
-// TODO: Make throttleX and Y 1 vector
 FVector forwardVector;
 
 float ThrottleX;
@@ -34,10 +34,13 @@ float Rudder; // 1 axis [-1,1] so only 1 float needed. Describes yaw ability of 
 
 float forwardDampVal = 0;
 
-// TODO: Better name. Make a const
-// I'd like to use this because it's nicer but uneral is doing that thing where it initializes my globals to garbage again. TODO: See why that is
-	// Remember that this also applies to movespeed I think? That could be nice to see too
+FVector landingGearPos(-185, -350, 110);
+
 float traceLength = 10000000; // length of ray trace telling plane height in tick
+
+// GPS screen location tracking details
+FRotator DefaultGPSCamRotation;
+FVector DefaultGPSCamTranslation;
 
 // Sets default values
 AJet::AJet()
@@ -50,7 +53,6 @@ AJet::AJet()
 
 	//Create components
 	body = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Body"));
-	Robot = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Robot"));
 	backCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("CameraComponent"));
 	wheel_FR = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Wheel_FR"));
 	wheel_FL = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Wheel_FL"));
@@ -65,26 +67,27 @@ AJet::AJet()
 	if (MeshAsset_body.Succeeded() and MeshAsset_wheel.Succeeded() and MeshAsset_Robot.Succeeded())
 	{
 		body->SetStaticMesh(MeshAsset_body.Object);
-		Robot->SetStaticMesh(MeshAsset_Robot.Object);
 		wheel_FR->SetStaticMesh(MeshAsset_wheel.Object);
 		wheel_FL->SetStaticMesh(MeshAsset_wheel.Object);
 		wheel_BM->SetStaticMesh(MeshAsset_wheel.Object);
+		GPSCam = CreateDefaultSubobject<USceneCaptureComponent2D>(TEXT("SceneCaptureComponent"));
 
 		//define hierarchy
 		backCamera->SetupAttachment(body);
-		Robot->SetupAttachment(body);
+		GPSCam->SetupAttachment(body);
 		wheel_FR->SetupAttachment(body);
 		wheel_FL->SetupAttachment(wheel_FR);
 		wheel_BM->SetupAttachment(wheel_FR);
 
-		//Define Starting location relative to body (landing gear down)
+		//Define Starting location relative to body for all components (landing gear starts down)
 		backCamera->SetRelativeLocation(FVector(-305, 0, 30));
-		Robot->SetRelativeLocation(FVector(0, 0, 40));
 		wheel_FR->SetRelativeLocation(FVector(25, 15, -50)); //TODO: Define one fvector above and modify its values for the other two later
 		wheel_FL->SetRelativeLocation(FVector(0, -30, 0));
 		wheel_BM->SetRelativeLocation(FVector(-75, -15, 0));
 	}
 }
+
+// TODO: If throttle is cancelled, nothing tells the system throttle is off and to lerp downwards. You commented that out
 
 // Called when the game starts or when spawned
 void AJet::BeginPlay()
@@ -102,7 +105,8 @@ void AJet::BeginPlay()
 		PlayerController->Possess(this);
 	}
 	moveSpeed = 0; // fix from bug that sometimes starts moveSpeed at 1000. Probably mostly an xbox controller bug?
-	
+	DefaultGPSCamRotation = GPSCam->GetRelativeRotation(); // set gps camera to not rotate
+	DefaultGPSCamTranslation = GPSCam->GetComponentLocation();
 }
 
 // Called every frame
@@ -113,6 +117,24 @@ void AJet::Tick(float DeltaTime)
 	forwardDampVal = (ThrottleX + ThrottleY) * 5;
 	body->SetLinearDamping(forwardDampVal);
 	body->SetAngularDamping(forwardDampVal);
+
+	// Landing Gear position interp
+	//FMath::FInterpTo(moveSpeed, 0, DeltaTime, 5.0f);
+	if (wheel_FR) {
+		FVector CurrentPosition = wheel_FR->GetRelativeLocation();
+		FVector NewPosition = FMath::VInterpTo(CurrentPosition, landingGearPos, DeltaTime, 5.0f);
+		wheel_FR->SetRelativeLocation(NewPosition);
+	}
+
+	// Set GPSCamera component to follow plane but never move upwards or tile upwards. Minimap
+	if (GPSCam){
+		FVector CurrentLocation = GPSCam->GetComponentLocation();
+		FVector BodyLocation = body->GetComponentLocation();
+		FRotator BodyRotation = body->GetComponentRotation();
+
+		GPSCam->SetWorldRotation(FRotator(DefaultGPSCamRotation.Pitch, BodyRotation.Yaw, DefaultGPSCamRotation.Roll));
+		GPSCam->SetWorldLocation(FVector(BodyLocation.X, BodyLocation.Y, DefaultGPSCamTranslation.Z));
+	}
 
 	// Plane's rotation and location are tracked to cast a ray straight downwards
 	FVector currentLocation = GetActorLocation(); // for raycasting
@@ -134,31 +156,32 @@ void AJet::Tick(float DeltaTime)
 		CollisionParams
 	);
 		
-	float HeightFromGround;
+	float HeightFromGround = 0.0f;
 	if (bHit)
 	{
 		HeightFromGround = currentLocation.Z - HitResult.ImpactPoint.Z;
 	}
 	//DrawDebugLine(GetWorld(), currentLocation, HitResult.ImpactPoint, FColor::Green, false, -1, 0, 1.0f);
-	//UE_LOG(LogTemp, Warning, TEXT("height from ground: %f"), HeightFromGround);
+	UE_LOG(LogTemp, Warning, TEXT("height from ground: %f"), HeightFromGround);
 
 	// TODO: This system doesn't take into account flying upsaide down (requiring reverse counter-steer) or sideways (requiring rudder counter-steer)
 	//UE_LOG(LogTemp, Warning, TEXT("pitch: %f"), currentRotation.Pitch);
-	if (currentRotation.Pitch > -80 && moveSpeed > 100){ // if the plane isn't facing straight downwards
+	if (currentRotation.Pitch > -80 && moveSpeed > 100 && HeightFromGround > 400){ // if the plane isn't facing straight downwards
 		float altitudeFactor = 1.0f - ((HeightFromGround - 80.0f) / 79920.0f); // scale torque power to altitude. Torque will be eliminated at heights of 80k feet
-		// TODO: Torque is re-added at heights above ceiling of airplane
-		float torquePitch = (415.0f - (moveSpeed / 6.0f)) * altitudeFactor; // 415 is tested to require almost perfect yoke resistance on controller. May need adjustment for sim
+
+		// Clamp prevents odd error where torque "twitches" when you reach the specified value
+		float torquePitch = FMath::Clamp((415.0f - (moveSpeed / 6.0f)) * altitudeFactor, 100.f, 500.f); // 415 is tested to require almost perfect yoke resistance on controller. May need adjustment for sim
+
 		FVector torque = FVector(0.f, torquePitch, 0.f);
-		
+
 		body->AddTorqueInDegrees(torque, NAME_None, true);
 	}
 
-	/*
-	// TODO: This same code block is functionally also commented out in throttle func because neither worked. Pick an approach and delete the rest
-	if (ThrottleX == 0 && ThrottleY == 0){
-		//UE_LOG(LogTemp, Warning, TEXT("speed should be lerping to 0"));
-    	moveSpeed = FMath::FInterpTo(moveSpeed, 0, DeltaTime, 5.0f);
-	}*/
+	// if plane isn't level then wind resistance will slow you down
+	if (HeightFromGround > 400 && currentRotation.Pitch < -15 || currentRotation.Pitch>15) {
+		float newMoveSPeed = moveSpeed -= 20;
+		moveSpeed = FMath::Lerp(moveSpeed, newMoveSPeed, 0.001);
+	}
 
 	// scales movement for plane rotation to never surpass max speed
 	moveScaled = moveSpeed/maxMoveSpeed;
@@ -238,15 +261,15 @@ void AJet::throttleControl(const FInputActionInstance& Instance) {
 	
 	// TODO: This all works but it should (at least the else if) be moved to tick so it runs when the runction doesn't
 	if ((ThrottleX + ThrottleY) >= (AxisValue.X + AxisValue.Y)){ // Throttle is moving
-		UE_LOG(LogTemp, Warning, TEXT("----------------axis x greater than 0. Throttle is lerping upwards"));
-		ThrottleX = FMath::FInterpTo(ThrottleX, AxisValue.X, GetWorld()->GetDeltaSeconds(), 0.5);
-		ThrottleY = FMath::FInterpTo(ThrottleY, AxisValue.Y, GetWorld()->GetDeltaSeconds(), 0.5);
-	
-	}
-	else if ((ThrottleX + ThrottleY) < (AxisValue.X + AxisValue.Y)){
 		UE_LOG(LogTemp, Warning, TEXT("----------------axis x less than 0. Throttle is lerping downwards"));
 		ThrottleX = FMath::FInterpTo(ThrottleX, AxisValue.X, GetWorld()->GetDeltaSeconds(), 0.01);
 		ThrottleY = FMath::FInterpTo(ThrottleY, AxisValue.Y, GetWorld()->GetDeltaSeconds(), 0.01);
+	
+	}
+	else if ((ThrottleX + ThrottleY) < (AxisValue.X + AxisValue.Y)){
+		UE_LOG(LogTemp, Warning, TEXT("----------------axis x greater than 0. Throttle is lerping upwards"));
+		ThrottleX = FMath::FInterpTo(ThrottleX, AxisValue.X, GetWorld()->GetDeltaSeconds(), 0.5);
+		ThrottleY = FMath::FInterpTo(ThrottleY, AxisValue.Y, GetWorld()->GetDeltaSeconds(), 0.5);
 	}
 
 	//UE_LOG(LogTemp, Warning, TEXT("Throttle left engine: %f\n Throttle right engine: %f"), ThrottleX, ThrottleY);
@@ -277,18 +300,20 @@ void AJet::rudderControl(const FInputActionInstance& Instance) {
 void AJet::landingGearControl(const FInputActionInstance& Instance) {
 	float FloatValue = Instance.GetValue().Get<float>();
 	//UE_LOG(LogTemp, Warning, TEXT("Gear is: %f"), FloatValue);
-	//Timeout zone. Something here causes crashes and I don't want to spend time on it rn
-	// Also note that I got rid of one of the calls to landing gear. Why were there 2???
 
+	// Since this bool only calls when the button is pressed one way, we set it here and move the landing gear in tick
 	// TODO: UNreal engine has built in suspension stuff. DO that for your langing gears
 	if (FloatValue == 1 and wheel_FR->GetRelativeLocation().Z) {
-		wheel_FR->SetRelativeLocation(FVector(225, 341, 600.f)); // Temp values until I make the final aircraft with the final positions
+		landingGearPos = (FVector(-185, -350, 110)); // Temp values until I make the final aircraft with the final positions
 	}
 	else {
-		wheel_FR->SetRelativeLocation(FVector(225, 341, -100));
+		landingGearPos = (FVector(-185, -350, 301));
+		if (moveSpeed > 10) {
+			float newMoveSPeed = moveSpeed -= 10;
+			moveSpeed = FMath::Lerp(moveSpeed, newMoveSPeed, 0.001);
+		}
 	}
 }
-
 
 // TODO: Map these values to buttons. toeBrakes should decrease velocity iff you're on the ground. Basically a lerp towards 0 on movement
 	// But i'll have to make a ground collision checker. That'll also come in handy for the radial yoke movement setup stuff I wanna do
@@ -300,9 +325,10 @@ void AJet::toeBrakeControl(const FInputActionInstance& Instance){
 	UE_LOG(LogTemp, Warning, TEXT("Left Toe brake: %f\n Right toe brake: %f"), AxisValue.X, AxisValue.Y);
 
 	float toeBrakeOut = ((AxisValue.X+1) + (AxisValue.Y+1));
-	//UE_LOG(LogTemp, Warning, TEXT("ToeBrakeOut: %f"), toeBrakeOut);
+	UE_LOG(LogTemp, Warning, TEXT("ToeBrakeOut: %f"), toeBrakeOut);
 	// TODO: Make a conditional that the plane's touching the ground and the landing gear is out for this to apply
-	moveSpeed = FMath::Lerp(moveSpeed, moveSpeed * toeBrakeOut, 0.001); // When both toebrakes are applied this will lerp towards 0
+	float newMoveSPeed = moveSpeed -= toeBrakeOut;
+	moveSpeed = FMath::Lerp(moveSpeed, newMoveSPeed, 0.001); // When both toebrakes are applied this will lerp towards 0
 
 
 }
