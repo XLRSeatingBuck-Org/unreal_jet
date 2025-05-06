@@ -14,7 +14,6 @@
 #include "GameFramework/PlayerController.h" // For accessing player controller
 #include "Jet.generated.h"
 
-
 UCLASS()
 class UNREALSIM_API AJet : public APawn
 {
@@ -23,10 +22,6 @@ class UNREALSIM_API AJet : public APawn
 public:
 	// Sets default values for this pawn's properties
 	AJet();
-
-protected:
-	// Called when the game starts or when spawned
-	virtual void BeginPlay() override;
 
 	//Mesh components
 	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Mesh Components")
@@ -46,7 +41,7 @@ protected:
 
 	//Input components
 	UPROPERTY(EditAnywhere, Category = "EnhancedInput") //TODO There's no way I can't manually pass these in through the header without blueprint. Figure that out adn save me a step
-	class UInputMappingContext* IM_main; //Necessary to define IM_Main in .cpp for input. This also means you have to define in blueprint tho
+		class UInputMappingContext* IM_main; //Necessary to define IM_Main in .cpp for input. This also means you have to define in blueprint tho
 	UPROPERTY(EditAnywhere, Category = "EnhancedInput")
 	class UInputAction* IA_stick;
 	UPROPERTY(EditAnywhere, Category = "EnhancedInput")
@@ -60,19 +55,24 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "EnhancedInput")
 	class UInputAction* IA_spoiler;
 
-public:	
+protected:
+	// Called when the game starts or when spawned
+	virtual void BeginPlay() override;
+
+public:
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
 
 	// Called to bind functionality to input
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="cppVars")
-	int moveSpeed = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "cppVars")
+	float force = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "cppVars")
+	float HeightFromGround = 0.0f;
 
 private:
 	void stickControl(const FInputActionInstance& Instance);
-	void stickRelease();
 	void throttleControl(const FInputActionInstance& Instance);
 	void rudderControl(const FInputActionInstance& Instance);
 	void landingGearControl(const FInputActionInstance& Instance);
