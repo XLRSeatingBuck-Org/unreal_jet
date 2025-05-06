@@ -69,6 +69,7 @@ public:
 
 private:
 	void stickControl(const FInputActionInstance& Instance);
+	void stickRelease();
 	void throttleControl(const FInputActionInstance& Instance);
 	void rudderControl(const FInputActionInstance& Instance);
 	void landingGearControl(const FInputActionInstance& Instance);

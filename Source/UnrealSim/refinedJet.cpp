@@ -13,14 +13,22 @@
 #include "Components/SceneCaptureComponent2D.h"
 #include "Engine/TextureRenderTarget2D.h"
 
+const float MAX_SPEED = 2000; // ideally will be 4000 later but speeds were optimized around 2000 as of now
+
 //float turnAmount;// TODO: these are constant multipliers. I should find good vals
-float throttleAmount = 800000; // Must be obscenely high to see any affect on the jet
+float throttlePos = 0; // Track throttle. Value between 0 and 2
+
+// Arbitrary multipliers to make sure handling feels good but realistic
+float throttleAmount = 800000;
 float turnAmount = 10;
 float liftAmount = 4000;
+int torqueScalar = 20; // torque for stick and rudders divided by this value to make the forces feel better and more realistic
+
+float HeightFromGround = 0.0f;
 
 //float throttle, pitch, yaw, roll;
 FVector torque; //Pitch, roll, yaw (in that order) movement on plane // TODO: Multiply by a float that's between 0 and 1 and set by force so a still plane can't steer
-FVector force; // forward force on Jet plane (from throttle)
+float force = 0; // forward force on Jet plane (from throttle)
 
 // Sets default values
 ArefinedJet::ArefinedJet()
@@ -73,7 +81,7 @@ void ArefinedJet::BeginPlay()
 
 	// Prevents bug where numbers are obscenely high on startup
 	torque = FVector(0, 0, 0);
-	force = FVector(0, 0, 0);
+	force = 0;
 
 	// Defaults I built physics around
 	body->SetLinearDamping(5);
@@ -81,18 +89,33 @@ void ArefinedJet::BeginPlay()
 }
 
 // TODO: Lerp values towards 0 once they're not being used anymore. Or find some constant value that they have to fight against to represent wind
-// TODO: normalize torque so rotation feels better. rotating and trying to turn does NOT work. Vals must be normalized
-// TODO: Add brakes
+// TODO: normalize torque so rotation feels better. rotating and trying to turn does NOT work. Vals must be normalized. I'm not sure if this is necessary. Waiting until we have the HUD so I can see rotation better
 
 // Called every frame
 void ArefinedJet::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	// Apply forces to jet. Forces calculated inside of user input functions below
+	// Apply forces to jet from yoke feedback. Forces calculated inside of user input functions below
 	body->AddTorqueInDegrees(torque, NAME_None, true);
-	body->AddForce(GetActorForwardVector() * force * 800000); // TODO: Use quats to noramlize torque to make airplane easier to fly
-	UE_LOG(LogTemp, Warning, TEXT("Force: %f, %f, %f"), force.X, force.Y, force.Z);
+
+	// clamp speed value to throttle position value between the min and max of both
+	float targetForceMag = FMath::GetMappedRangeValueClamped(FVector2D(0.0f, 2.0f), FVector2D(0.0f, MAX_SPEED), throttlePos);
+
+	// interpSpeed based on if shifting up or down
+	float interpSpeed;
+	if (force > targetForceMag) {
+		interpSpeed = 0.05;
+	}
+	else {
+		interpSpeed = 1;
+	}
+	force = FMath::FInterpTo(force, targetForceMag, DeltaTime, interpSpeed);
+
+	FVector appliedForce = GetActorForwardVector() * force * 800000;
+
+	body->AddForce(appliedForce);
+	UE_LOG(LogTemp, Warning, TEXT("Force: %f"), force);
 
 	//Calculate Lift
 	FVector forward = GetOwner()->GetActorForwardVector();
@@ -126,7 +149,6 @@ void ArefinedJet::Tick(float DeltaTime)
 		CollisionParams
 	);
 
-	float HeightFromGround = 0.0f;
 	if (bHit)
 	{
 		HeightFromGround = currentLocation.Z - HitResult.ImpactPoint.Z;
@@ -139,7 +161,7 @@ void ArefinedJet::Tick(float DeltaTime)
 	// altitudeFactor is is scalable val from 0 to 1. 13 is the height read from the plane on the ground and 79920 is a conversion to 80k feet (cruising altitude for A10-C jets
 	// THe idea is the plane will feel less downwards force as you get higher until you get into cruising altitude
 	// When you're above cruising altitude, we fetch the absolute value of altitude factor so your plane starts dipping down again when you get too high
-	if (currentRotation.Pitch > -80 && force.X > 100 && HeightFromGround > 15) { // if the plane isn't facing straight downwards
+	if (currentRotation.Pitch > -80 && force > 100 && HeightFromGround > 15) { // if the plane isn't facing straight downwards
 		float altitudeFactor = FMath::Abs(1.0f - ((HeightFromGround - 13.0f) / 79920.0f)); // scale torque power to altitude. Torque will be eliminated at heights of 80k feet
 		//UE_LOG(LogTemp, Warning, TEXT("alt factor: %f"), altitudeFactor);
 
@@ -148,12 +170,33 @@ void ArefinedJet::Tick(float DeltaTime)
 		// The clamping gives min and max torque force. Without it, the torque could go negative (bad)
 		// Current implementation requires too much initial speed and goes down to the lower value too fast imo
 			// 345 measures intensity. You could probably turn that down and the 10.f up to fix this? I don't want to spend too much time tweaking vals rn
-		float torquePitch = FMath::Clamp((345 - (force.X / 10.0f)) * altitudeFactor, 100.f, 150.f); // 415 is tested to require almost perfect yoke resistance on controller. May need adjustment for sim
-		UE_LOG(LogTemp, Warning, TEXT("torquepitch: %f"), torquePitch);
-		FVector downTorque = FVector(torquePitch, 0.f, 0.f);
-		body->AddTorqueInDegrees(downTorque, NAME_None, true);
+		float torquePitch = FMath::Clamp((345 - (force / 10.0f)) * altitudeFactor, 100.f, 150.f);
+		// Get the plane's current right vector in world space
+		FVector Forward = GetActorForwardVector();  // Local +X in world space
+		FVector WorldDown = FVector(0.f, 0.f, -1.f); // Global down direction
+
+		// Compute axis that would rotate Forward toward WorldDown
+		FVector PitchDownAxis = FVector::CrossProduct(Forward, WorldDown).GetSafeNormal();
+
+		// Apply torque around that axis
+		FVector pitchTorque = PitchDownAxis * torquePitch;
+		body->AddTorqueInDegrees(pitchTorque, NAME_None, true);
 	}
 
+	// Area of attack. If plane isn't flying straight then speed will begin to reduce
+	if (HeightFromGround > 50 && force > 0 && currentRotation.Pitch < -15 || currentRotation.Pitch>15) {
+		force -= 5; // small value. This shouldn't be that noticable or detrimental
+	}
+
+	if (!torque.IsNearlyZero(0.01f)) // Avoid tiny jitter
+	{
+		// Torque damping factor (tweak this scalar to control damping strength)
+		const float DampingStrength = 500.0f;
+
+		// Apply damping torque opposite to current torque
+		FVector dampingTorque = -torque.GetSafeNormal() * FMath::Min(torque.Length(), DampingStrength);
+		torque += dampingTorque * DeltaTime;
+	}
 }
 
 // Called to bind functionality to input
@@ -172,6 +215,7 @@ void ArefinedJet::SetupPlayerInputComponent(UInputComponent* PlayerInputComponen
 	//Call Enhanced input value as Var input, cast into callback function for user input if valid
 	if (UEnhancedInputComponent* Input = CastChecked<UEnhancedInputComponent>(PlayerInputComponent)) {
 		Input->BindAction(IA_stick, ETriggerEvent::Triggered, this, &ArefinedJet::stickControl);
+		Input->BindAction(IA_stick, ETriggerEvent::Completed, this, &ArefinedJet::stickRelease);
 		Input->BindAction(IA_throttle, ETriggerEvent::Triggered, this, &ArefinedJet::throttleControl);
 		Input->BindAction(IA_rudder, ETriggerEvent::Triggered, this, &ArefinedJet::rudderControl);
 		Input->BindAction(IA_landingGear, ETriggerEvent::Triggered, this, &ArefinedJet::landingGearControl);
@@ -188,86 +232,105 @@ void ArefinedJet::stickControl(const FInputActionInstance& Instance) {
 	// Speed decides how easy or hard it is to turn
 	// At speed = 0, you can't turn; at speed = 2000 it's very easy to turn; at speed = 4000 (max speed), it's very hard to turn but possible
 	// Essentially, your plane is cutting through the air too fast to turn so you would need to slow down for it to work properly
+
+	//float currentSpeed = GetActorForwardVector().X;
+	// TODO: Set to speed being applied by throttle instead of actual plane forward vector.
+	// Right now letting off of the throttle and free-falling means you can't counter-steer
+	// get length of forward vector and this should be fine
 	float torqueScale;
-	if (force.X <= 2000.0f) {
-		// Rising from 0 to 180 as speed goes from 0 to 2000
-		torqueScale = FMath::Lerp(0.0f, 180.0f, force.X / 2000.0f);
+	if (force <= 2000.0f) {
+		torqueScale = FMath::Lerp(0.0f, 180.0f, force / (MAX_SPEED / 2));
 	}
 	else {
-		// Falling from 180 to 20 as speed goes from 2000 to 4000
-		torqueScale = FMath::Lerp(180.0f, 20.0f, (force.X - 2000.0f) / 2000.0f);
+		torqueScale = FMath::Lerp(180.0f, 20.0f, (force - (MAX_SPEED / 2)) / (MAX_SPEED / 2));
 	}
 
-	// !!!These values are backwards. Keep in mind when modifying in the future
 	// Apply torque locally so that pitch may take roll into account
 	FVector LocalTorque = FVector(-AxisValue.Y, -AxisValue.X, 0.0f) * torqueScale;
-	torque = GetActorRotation().RotateVector(LocalTorque);
+	torque += (GetActorRotation().RotateVector(LocalTorque))/torqueScalar;
 	UE_LOG(LogTemp, Warning, TEXT("Rotation is: %f,%f"), AxisValue.X, AxisValue.Y);
 
 }
 
+// If stick is released, this ensures that no vals are read
+// If joystick has implemented dead zones then unreal stops reading stick val before it reaches 0. This prevents the drift that would cause
+void ArefinedJet::stickRelease() { //reset pitch and roll
+	//UE_LOG(LogTemp, Warning, TEXT("Sticks Reset"));
+	NULL;
+}
+
+// Save speed based on throttle position to calculate plane velocity. Overwrite rotation if one engine is lower than the other
 void ArefinedJet::throttleControl(const FInputActionInstance& Instance) {
 	FVector2D AxisValue = Instance.GetValue().Get<FVector2D>(); //A-10C jets are dual-engine. X=left engine, Y=Right engine
 	UE_LOG(LogTemp, Warning, TEXT("Throttle left engine: %f\n Throttle right engine: %f"), AxisValue.X, AxisValue.Y);
 
-	//float forceMult = 500000;
-	float forceVal = (AxisValue.X + AxisValue.Y);
-
-	if (force.X <= 2000) {
-		force += FVector(forceVal, forceVal, forceVal);
-	}
+	//Calculating throttle here and then applying it in tick so we can shift speed up and down
+	throttlePos = (AxisValue.X + AxisValue.Y);
 	
+	// Calculate turning power of jet based on engine control instead of rudders. Turning this way should be slow and clunky
 	torque.Z += ((AxisValue.X - AxisValue.Y) / 15); //Y rotation is negative so we want to go negative if X is bigger. /15 to dampen plane's ability to turn. Bigger=more damp
 }
 
-void ArefinedJet::rudderControl(const FInputActionInstance& Instance) {
-	float FloatValue = Instance.GetValue().Get<float>(); //Rudders will go between positive and negative to decide rotation so we don't need a vector
+// Control rudder pedals under jet. Steer plane on yaw axis
+void ArefinedJet::rudderControl(const FInputActionInstance& Instance) { // TODO: Make local
+	float floatValue = Instance.GetValue().Get<float>();
 
-	torque.Z += FloatValue;
+	// Scale the ability of the torque based on speed so that the plane is more capable of turning at higher forces
+	float torqueScale;
+	if (force <= 2000.0f) {
+		torqueScale = FMath::Lerp(0.0f, 180.0f, force / MAX_SPEED);
+	}
+	else {
+		torqueScale = FMath::Lerp(180.0f, 20.0f, (force - MAX_SPEED) / MAX_SPEED);
+	}
+
+	// Global yaw axis based on current rotation
+	FVector globalYawAxis = GetActorRotation().RotateVector(FVector(0.0f, 0.0f, 1.0f));
+
+	float groundScale = (HeightFromGround < 40) ? torqueScale * 2.0f : torqueScale;
+
+	// Accumulate torque instead of overwriting it
+	torque += (globalYawAxis * floatValue * groundScale)/torqueScalar;
 }
 
+// Moves the landing gears in and out.
+// A-10C jets have strong landing gears that can even be extended while the plane is on the ground so this can be really simple
 void ArefinedJet::landingGearControl(const FInputActionInstance& Instance) {
 	float FloatValue = Instance.GetValue().Get<float>();
 	//UE_LOG(LogTemp, Warning, TEXT("Gear is: %f"), FloatValue);
 
-	// Since this bool only calls when the button is pressed one way, we set it here and move the landing gear in tick
-	// TODO: UNreal engine has built in suspension stuff. DO that for your langing gears
-	//if (FloatValue == 1 and wheel_FR->GetRelativeLocation().Z) {
-		//landingGearPos = (FVector(-185, -350, 110)); // Temp values until I make the final aircraft with the final positions
-	//}
-	//else {
-		//landingGearPos = (FVector(-185, -350, 301));
-		//if (moveSpeed > 10) {
-			//float newMoveSPeed = moveSpeed -= 10;
-			//moveSpeed = FMath::Lerp(moveSpeed, newMoveSPeed, 0.001);
-		//}
-	//}
+	// This doesn't need to be changed at all
+	// TODO: Steal directly from jet.cpp
 }
 
-// TODO: Map these values to buttons. toeBrakes should decrease velocity iff you're on the ground. Basically a lerp towards 0 on movement
-	// But i'll have to make a ground collision checker. That'll also come in handy for the radial yoke movement setup stuff I wanna do
-// The spoiler should dempen upwards movement on the plane AND speed regardless of height. It should make toe brakes more effective on the ground as the full weight of the plane is now on the wheels
 
+// Wheel brakes. They only work when on the ground
 void ArefinedJet::toeBrakeControl(const FInputActionInstance& Instance) {
 	FVector2D AxisValue = Instance.GetValue().Get<FVector2D>(); //2d Vector to represent both toe brakes. X = left Y = right
-	//float toeBrake =Instance.GetValue().Get<float>();
+
 	UE_LOG(LogTemp, Warning, TEXT("Left Toe brake: %f\n Right toe brake: %f"), AxisValue.X, AxisValue.Y);
 
-	//float toeBrakeOut = ((AxisValue.X + 1) + (AxisValue.Y + 1));
-	//UE_LOG(LogTemp, Warning, TEXT("ToeBrakeOut: %f"), toeBrakeOut);
-	// TODO: Make a conditional that the plane's touching the ground and the landing gear is out for this to apply
-	//float newMoveSPeed = moveSpeed -= toeBrakeOut;
-	//moveSpeed = FMath::Lerp(moveSpeed, newMoveSPeed, 0.001); // When both toebrakes are applied this will lerp towards 0
+	float brakeForce = (AxisValue.X + AxisValue.Y) * 10;
 
+	if (HeightFromGround <= 40 && force > 0) {
+		force -= brakeForce;
 
+	}
+	if (force < 0) {
+		force = 0;
+	}
 }
 
-// brake the plane from the wings. Good for landing plane. Increases effectiveness of toe brakes
+// brake the plane from the wings. Works on ground and in air
 void ArefinedJet::spoilerControl(const FInputActionInstance& Instance) {
 	float FloatValue = Instance.GetValue().Get<float>();
-	//UE_LOG(LogTemp, Warning, TEXT("Spoiler is: %f"), FloatValue);
-	//if (FloatValue == 1) {
-		//moveSpeed = FMath::Lerp(moveSpeed, 0, 0.001); // According to my timer this almost halves the time it takes for braking (~47 to ~23)
-		// TODO: Once I've implemented the downwards force, apply that here too and increase brake control power
-	//}
+
+	float brakeForce = FloatValue * 10;
+
+	if (force > 0) {
+		force -= brakeForce;
+	}
+	if (force < 0) {
+		force = 0;
+	}
 }
