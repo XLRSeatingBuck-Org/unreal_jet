@@ -109,8 +109,6 @@ void AJet::BeginPlay()
 	DefaultGPSCamTranslation = GPSCam->GetComponentLocation();
 }
 
-// TODO: Lerp values towards 0 once they're not being used anymore. Or find some constant value that they have to fight against to represent wind
-
 // Called every frame
 void AJet::Tick(float DeltaTime)
 {
@@ -196,7 +194,7 @@ void AJet::Tick(float DeltaTime)
 	// altitudeFactor is is scalable val from 0 to 1. 13 is the height read from the plane on the ground and 79920 is a conversion to 80k feet (cruising altitude for A10-C jets
 	// THe idea is the plane will feel less downwards force as you get higher until you get into cruising altitude
 	// When you're above cruising altitude, we fetch the absolute value of altitude factor so your plane starts dipping down again when you get too high
-	if (currentRotation.Pitch > -80 && force > 100 && HeightFromGround > 15) { // if the plane isn't facing straight downwards
+	if (currentRotation.Pitch > -80 && force > 100 && HeightFromGround > 200) { // if the plane isn't facing straight downwards
 		float altitudeFactor = FMath::Abs(1.0f - ((HeightFromGround - 13.0f) / 79920.0f)); // scale torque power to altitude. Torque will be eliminated at heights of 80k feet
 
 		// The clamping gives min and max torque force. Without it, the torque could go negative (bad)
@@ -292,7 +290,7 @@ void AJet::throttleControl(const FInputActionInstance& Instance) {
 void AJet::rudderControl(const FInputActionInstance& Instance) { // TODO: Make local
 	float floatValue = Instance.GetValue().Get<float>();
 
-	// Scale the ability of the torque based on speed so that the plane is more capable of turning at higher forces
+	// Scale the ability of the torque based on speed so that the plane is more capable of turning at higher forces or when on ground
 	float torqueScale;
 	if (force <= 2000.0f) {
 		torqueScale = FMath::Lerp(0.0f, 180.0f, force / MAX_SPEED);
