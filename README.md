@@ -4,7 +4,7 @@
 
 Simulate a realistic jet plane in a familiar environment, in this case it's Oregon. The plane's movement is based on real-world physics using a combination of Unreal Engine's built-in chaos engine physics simulation and logic to help simulate movement, wind resistance, etc. In order to teach the player there's the environment itself which can be played using hardware meant to simulate a real plane. There's also a detailed tutorial system that goes over how to drive, fly, and land a jet.
 
-([High-level overview via website here]([https://xlrseatingbuck-org.github.io/unity-car.html](https://xlrseatingbuck-org.github.io/unreal-plane.html)))
+[High-level overview via website here](https://xlrseatingbuck-org.github.io/unreal-plane.html)
 
 # Installation and Setup
 
