@@ -1,139 +1,40 @@
 ﻿# Technical Documentation
-
-# Architecture and Design
-
-See our website ([car](https://xlrseatingbuck-org.github.io/unity-car.html)) ([plane](https://xlrseatingbuck-org.github.io/unity-plane.html)) for more information.
-
-![main activity diagram](images/main_activity.drawio.png)
+This document is for technical information. More general information about the project can be found on the readme.md file or on our [website](https://xlrseatingbuck-org.github.io/unreal-plane.html)
 
 ## Project Overview
 
-This simulation is set in a realistic 3D environment constructed using Cesium for Unity, allowing for accurate geospatial data integration. The environment was set up following the official Cesium documentation, enabling real-world terrain and building placement. The simulation supports both VR and non-VR modes, allowing users to switch seamlessly between the two.
+The simulation simply places an airplane inside of the Albany, Oregon airport. The user, with the help of tutorials should they be enabled, is to fly to Corvallis using an airplane that obeys real-world physics
 
-## Input
-
-![input diagram](images/input-diagram.png)
-
-Input in Unity is abstracted into generic actions that are read out as a data type (bool for button, float for slider, etc). This way, the code doesn't have to worry about specific devices or combinations of devices. Mapping controllers to actions is as simple as pressing a button on the controller and listening for said button.
+![Plane Activity Diagram](Plane%20Activity%20Diagram.drawio.png)
 
 ## Enviroment
 
-### Car
-
-We used ArcGIS CityEngine to extract a region of Corvallis. This region includes the location, size, and shape of buildings, trees, and roads. This data was exported as an fbx object and textures, and then imported into Unity. Cesium's Bing map data provides the visuals for the rest of the world, to ground the city model in it's location.
-
-### Plane
-
-We use Cesium's Bing terrain and Google 3d tiles to render the world that the user flies over. The 3d tiles are restricted to just the airport area to make it stand out more and to improve performance.
-
-Cesium for Unity does not support vector or point data, so for the forest where the fire is, we used an OSM extract of the area and wrote a custom xml parser to extract the relevant data and place trees in the correct areas. This was done instead of using Google's 3d data because each tree needs to ability to individually die from the fire, which is not possible with only mesh data from Google.
+The environment is rendered using Ceisum's Google 3d tiles. The tiles are low-fidelity which looks fairly unrealistic up close but nearly photo-realistic while in the air. Bing's road map tiles are also used to render the GPS system below the map.
 
 # Classes
 
-![main class diagram](images/class_diagram.drawio.png)
+![main class diagram](classDiagram.drawio.png)
 
-## TitleController
+## Jet
 
-Simple ui logic for handling button presses to go to the correct scene from the starting scene.
+The main driver of the software. The jet c++ class manages the states of different components of the jet such as the landing gears. Most of the methods are callback functions that return the state of different inputs. Trace length is a line trace at the bottom of the airplane that tracks it's current height. The height of an airplane affects the tutorial trigger for flight but it's also necessary here because airplanes behave differently at different altitudes.
+An airplane experiences more resistance at different heights. An A-10C warthog Jet (the plane that the simulation was modeled after) works the best at 80,000 km high. This is "cruising altitude" and it's the height where the plane experiences the least resistance from gravity. This means adjusting your torque less and it also means turning the plane quickly is easier in general.
 
-## ExperienceDirector
+## JetBlueprint
 
-The top-level class for the entire project. Stores the general state of the simulation and determines what should happen next. It also tracks win/loss conditions and handles restarting or exiting the game.
+A child class derived from the c++ class. It primarily acts as a manager for the other classes to latch onto. It communicates pitch and yaw to the HUD class to rotate the compass correctly and it sends location data to the GPS class to track current location on the map.
 
-## OsmLoader
+## Tutorial
 
-Loads the OSM data, which contains information about specific points on the map (mainly buildings and forest).
-This is used to place trees in the proper area, that can then be lit on fire.
+The tutorial class is primarily driving a widget object to instruct the user on how to fly an airplane. The SetScreen() method sets up the use of the buttons while the enable and disable menu are used to invoke different pages of the widget and change input types so that the widget can be interacted with.
 
-## BeaconTrigger
+## HUD
 
-Tracks whether a vehicle is in range of a given marker. Reports this state to the ExperienceDirector to change the status text.
-
-## FireExtinguishTracker
-
-Tracks the extinguished state of each fire in the simulation. Communicates with the ExperienceDirector to determine if all fires have been put out.
-
-## CrashController
-
-Manages collisions between the vehicle and the environment. Triggers haptic feedback to enhance realism upon impact.
-
-## CarMovement
-
-Main movement class for the firetruck. Gets input from controllers and applies forces to the truck via its wheels.
-
-## JetMovement
-
-Main movement class for the aeriel firefighter.
-Gets input from controllers and applies forces to the plane. Handles all of the flight physics, including
-simulating drag, calculating lift based on area of attack, and controlling steering/flaps.
-Finally, this applies basic haptic vibration depending on the speed of the plane.
-
-## HoseController
-
-Enables movement and aiming of the firetruck hose. Controls water spray to extinguish fires.
-
-## EnableExteng
-
-Handles the releasing of foam from the plane.
-
-## BringFireDown
-
-Handles collision between water and fire, and properly extinguishing the fire.
-This signals to FireExtinguishTracker when the fire is extinguished.
-This also grows the fire over time, triggering a loss when it gets too big.
-
-## GasCollision
-
-Handles shooting foam out of the plane.
-Extinguishes the fire when the foam touches the fire.
-This signals to FireExtinguishTracker when the fire is extinguished.
-
-## IncreaseFire
-
-Similar to the behavior of BringFireDown, this grows the fire over time, triggering a loss when it gets too big.
-
-## CameraController
-
-Handles camera switching based on whether the user is in VR or not.
-Also changes the UI appropriately to be visible in VR.
+A tool inside of jet planes that shows the pilot their pitch, yaw, speed, and altitude. They can also be used to highlight targets but that feature was not used for this simulation.
 
 # Building and Releasing
 
-1. Open Unity
-2. Go to File > Build Profiles
-3. Go to the Windows platform and click Build
-4. Make a zip file from the build folder you just built to
-5. [Create a new release on the repository](https://github.com/XLRSeatingBuck-Org/unity-car-jet/releases/new)
-
-# Testing
-
-This mirrors each item of the main activity diagram.
-Everything works in the current build. If anything breaks, refer back to these cases.
-
-| Test Case | Acceptance Criteria | Succeeds? |
-| --- | --- | --- |
-| TC-01 | Player vehicle starts at airport or fire station | ✓ |
-| TC_02 | Fire beacon exists at fire | ✓ |
-| TC_03 | Player vehicle can use controls to take off airplane or leave fire station | ✓ |
-| TC_04 | Player vehicle can use controls to aim fire hose on fire truck | ✓ |
-| TC_05 | Player vehicle can use controls to fire water/foam from the fire plane or fire truck | ✓ |
-| TC_06 | Fire expands over time | ✓ |
-| TC_07 | Player loses if fire gets too big (i.e. doubles in size) | ✓ |
-| TC_08 | Fire reduces when in contact with water/foam | ✓ |
-| TC_09 | Extinguishing all the fires instructs player to fly/drive home | ✓ |
-| TC_10 | Player vehicle can use controls to fly/drive back home | ✓ |
-| TC_11 | Crashing player vehicle into a surface results in a loss | ✓ |
-| TC_12 | Player vehicle can use controls to land at the airport or pull into fire station | ✓ |
-
-# Future Enhancements
-
-In its current state, this project achieves all main goals given to us.
-
-Below is further potential functionality that may be added by future developers:
-
-- Visuals and realism could be vastly improved via better assets and more fine tuning of post processing effects.
-- Fire simulation can be expanded to be more realistic. For exmaple, it could destroy trees and buildings as it spreads.
-- Additional scenarios and factors can be added, such as weather events and turbulence.
-- Biometrics could be implemented into the system to read heartrate and potentially adjust difficulty to make a more pleasant experience.
-- The simulation could be connected to a multi-screen or multi-projector display for more immersion.
-- The VR mode could be expanded upon to allow controller input and cockpit interaction.
+1. Open Unreal and the Unreal Plane project
+2. Select the platforms dropdown->Windows->package project
+3. Zip files
+5. [Create a new release on the repository](https://github.com/XLRSeatingBuck-Org/unreal_jet/releases/new)
