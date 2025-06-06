@@ -31,4 +31,4 @@ If Unreal Engine does not detect input devices on startup, it will not detect th
 
 ---
 
-For other cases, see the test cases in the [technical documentation](docs/technical-docs.md).
+For other cases, see the test cases in the [technical documentation](Docs/technical-docs.md).
